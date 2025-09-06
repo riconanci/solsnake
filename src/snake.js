@@ -1,4 +1,4 @@
-// File: src/snake.js
+// File: src/snake.js - Enhanced with proper trail buffer
 import { CONFIG } from './config.js';
 import { Vector2D, MathUtils } from './utils.js';
 
@@ -11,7 +11,11 @@ export class Snake {
     this.speed = CONFIG.PHYSICS.BASE_SPEED;
     this.isBoosting = false;
     
-    // Simple segment system that works
+    // Trail buffer system - stores exact path the head traveled
+    this.trail = [];
+    this.maxTrailLength = 1000; // Enough for very long snakes
+    
+    // Segments positioned along trail at specific distances
     this.segments = [];
     
     // Visual properties
@@ -23,33 +27,32 @@ export class Snake {
     this.isAlive = true;
     this.score = 0;
     
-    console.log('🐍 Simple working snake created');
+    console.log('🐍 Snake with trail buffer system created');
     
-    // Initialize segments
-    this.initializeSegments();
+    // Initialize trail and segments
+    this.initializeTrailAndSegments();
   }
   
-  initializeSegments() {
-    this.segments = [];
-    
-    // Add head
-    this.segments.push({
+  initializeTrailAndSegments() {
+    // Start trail with current position
+    this.trail = [{
       position: new Vector2D(this.position.x, this.position.y),
-      targetPosition: new Vector2D(this.position.x, this.position.y),
-      isHead: true
-    });
+      arcLength: 0
+    }];
     
-    // Add body segments in a line behind head
-    for (let i = 1; i < this.length; i++) {
-      const segmentPos = this.position.add(Vector2D.fromAngle(this.angle + Math.PI, i * CONFIG.PHYSICS.SEGMENT_GAP));
+    // Initialize segments at proper distances along the trail
+    this.segments = [];
+    for (let i = 0; i < this.length; i++) {
+      const distance = i * CONFIG.PHYSICS.SEGMENT_GAP;
+      const position = this.getPositionAtDistance(distance);
       this.segments.push({
-        position: new Vector2D(segmentPos.x, segmentPos.y),
-        targetPosition: new Vector2D(segmentPos.x, segmentPos.y),
-        isHead: false
+        position: position,
+        distance: distance,
+        isHead: i === 0
       });
     }
     
-    console.log('🐍 Initialized', this.segments.length, 'segments');
+    console.log('🐍 Initialized trail buffer with', this.segments.length, 'segments');
   }
   
   update(deltaTime, turnDirection, boost) {
@@ -80,62 +83,106 @@ export class Snake {
     const velocity = Vector2D.fromAngle(this.angle, currentSpeed * deltaTime);
     const newHeadPosition = this.position.add(velocity);
     
-    // Update segments with smooth following
-    this.updateSegments(newHeadPosition, deltaTime);
+    // Add new position to trail
+    this.addToTrail(newHeadPosition);
     
     // Update head position
     this.position = newHeadPosition;
-    this.segments[0].position = this.position;
-    this.segments[0].targetPosition = this.position;
+    
+    // Update all segments to follow the exact trail path
+    this.updateSegmentsAlongTrail();
   }
   
-  updateSegments(newHeadPosition, deltaTime) {
-    if (this.segments.length === 0) return;
+  addToTrail(newPosition) {
+    // Calculate distance from last trail point
+    const lastTrailPoint = this.trail[0];
+    const distance = lastTrailPoint.position.distanceTo(newPosition);
     
-    // Set target positions - each segment targets staying behind the one in front
-    for (let i = 1; i < this.segments.length; i++) {
-      const currentSegment = this.segments[i];
-      const targetSegment = this.segments[i - 1];
+    // Only add point if we've moved enough (prevents too many trail points)
+    if (distance >= CONFIG.PHYSICS.TRAIL_SAMPLE_RATE) {
+      // Add new trail point with cumulative arc length
+      const newArcLength = lastTrailPoint.arcLength + distance;
       
-      // Calculate direction from current segment to target
-      const direction = targetSegment.position.subtract(currentSegment.position);
-      const distance = direction.magnitude();
+      this.trail.unshift({
+        position: new Vector2D(newPosition.x, newPosition.y),
+        arcLength: newArcLength
+      });
       
-      // Keep segments at proper distance
-      if (distance > CONFIG.PHYSICS.SEGMENT_GAP * 1.2) {
-        // Too far, move closer
-        const moveDirection = direction.normalize();
-        const targetPos = targetSegment.position.subtract(moveDirection.multiply(CONFIG.PHYSICS.SEGMENT_GAP));
-        currentSegment.targetPosition = targetPos;
-      } else if (distance < CONFIG.PHYSICS.SEGMENT_GAP * 0.8) {
-        // Too close, move away
-        const moveDirection = direction.normalize();
-        const targetPos = targetSegment.position.subtract(moveDirection.multiply(CONFIG.PHYSICS.SEGMENT_GAP));
-        currentSegment.targetPosition = targetPos;
-      } else {
-        // Good distance, small adjustment to follow curves
-        const moveDirection = direction.normalize();
-        const targetPos = targetSegment.position.subtract(moveDirection.multiply(CONFIG.PHYSICS.SEGMENT_GAP));
-        currentSegment.targetPosition = targetPos;
+      // Remove old trail points to prevent memory bloat
+      const maxTrailDistance = this.length * CONFIG.PHYSICS.SEGMENT_GAP + 100;
+      this.trail = this.trail.filter(point => 
+        newArcLength - point.arcLength <= maxTrailDistance
+      );
+      
+      // Keep trail array size reasonable
+      if (this.trail.length > this.maxTrailLength) {
+        this.trail = this.trail.slice(0, this.maxTrailLength);
       }
     }
-    
-    // Move segments toward their targets smoothly
-    const baseFollowSpeed = this.speed * 2.0; // Fast following
-    const boostMultiplier = this.isBoosting ? CONFIG.PHYSICS.BOOST_SPEED_MULTIPLIER * 1.2 : 1.0;
-    const followSpeed = baseFollowSpeed * boostMultiplier;
-    
-    for (let i = 1; i < this.segments.length; i++) {
+  }
+  
+  updateSegmentsAlongTrail() {
+    // Update each segment to be at its proper distance along the trail
+    for (let i = 0; i < this.segments.length; i++) {
       const segment = this.segments[i];
-      const direction = segment.targetPosition.subtract(segment.position);
-      const distance = direction.magnitude();
+      const targetDistance = i * CONFIG.PHYSICS.SEGMENT_GAP;
       
-      if (distance > 0.5) {
-        const moveAmount = Math.min(distance, followSpeed * deltaTime);
-        const moveDirection = direction.normalize();
-        segment.position = segment.position.add(moveDirection.multiply(moveAmount));
+      // Find position along trail at this distance
+      const position = this.getPositionAtDistance(targetDistance);
+      segment.position = position;
+      segment.distance = targetDistance;
+    }
+  }
+  
+  getPositionAtDistance(targetDistance) {
+    if (this.trail.length === 0) {
+      return new Vector2D(this.position.x, this.position.y);
+    }
+    
+    if (this.trail.length === 1) {
+      return this.trail[0].position;
+    }
+    
+    // Find the two trail points that bracket our target distance
+    const headArcLength = this.trail[0].arcLength;
+    const actualTargetDistance = headArcLength - targetDistance;
+    
+    // If target is at or beyond head, return head position
+    if (actualTargetDistance >= headArcLength) {
+      return this.trail[0].position;
+    }
+    
+    // If target is beyond tail, return tail position
+    if (actualTargetDistance <= this.trail[this.trail.length - 1].arcLength) {
+      return this.trail[this.trail.length - 1].position;
+    }
+    
+    // Find the segment in trail that contains our target distance
+    for (let i = 0; i < this.trail.length - 1; i++) {
+      const currentPoint = this.trail[i];
+      const nextPoint = this.trail[i + 1];
+      
+      if (actualTargetDistance <= currentPoint.arcLength && 
+          actualTargetDistance >= nextPoint.arcLength) {
+        
+        // Interpolate between these two points
+        const segmentLength = currentPoint.arcLength - nextPoint.arcLength;
+        
+        if (segmentLength === 0) {
+          return currentPoint.position;
+        }
+        
+        const t = (actualTargetDistance - nextPoint.arcLength) / segmentLength;
+        
+        return new Vector2D(
+          nextPoint.position.x + (currentPoint.position.x - nextPoint.position.x) * t,
+          nextPoint.position.y + (currentPoint.position.y - nextPoint.position.y) * t
+        );
       }
     }
+    
+    // Fallback: return last trail position
+    return this.trail[this.trail.length - 1].position;
   }
   
   grow(amount = 1) {
@@ -152,42 +199,13 @@ export class Snake {
     
     // Add new segments at the tail
     for (let i = 0; i < amount; i++) {
-      if (this.segments.length === 0) {
-        // Safety: create head if no segments exist
-        this.segments.push({
-          position: new Vector2D(this.position.x, this.position.y),
-          targetPosition: new Vector2D(this.position.x, this.position.y),
-          isHead: true
-        });
-        continue;
-      }
+      const segmentIndex = this.segments.length;
+      const distance = segmentIndex * CONFIG.PHYSICS.SEGMENT_GAP;
+      const position = this.getPositionAtDistance(distance);
       
-      const lastSegment = this.segments[this.segments.length - 1];
-      
-      // Place new segment behind the last one
-      let newPosition;
-      if (this.segments.length > 1) {
-        // Get direction from second-to-last to last segment
-        const prevSegment = this.segments[this.segments.length - 2];
-        const direction = lastSegment.position.subtract(prevSegment.position);
-        
-        if (direction.magnitude() > 0.1) {
-          // Extend in the same direction
-          const normalizedDirection = direction.normalize();
-          newPosition = lastSegment.position.add(normalizedDirection.multiply(CONFIG.PHYSICS.SEGMENT_GAP));
-        } else {
-          // Fallback: use snake's current angle
-          newPosition = lastSegment.position.add(Vector2D.fromAngle(this.angle + Math.PI, CONFIG.PHYSICS.SEGMENT_GAP));
-        }
-      } else {
-        // Only head exists, place first body segment behind it
-        newPosition = lastSegment.position.add(Vector2D.fromAngle(this.angle + Math.PI, CONFIG.PHYSICS.SEGMENT_GAP));
-      }
-      
-      // Add the new segment
       this.segments.push({
-        position: new Vector2D(newPosition.x, newPosition.y),
-        targetPosition: new Vector2D(newPosition.x, newPosition.y),
+        position: position,
+        distance: distance,
         isHead: false
       });
     }
@@ -202,15 +220,13 @@ export class Snake {
   getSegmentRadius(segmentIndex) {
     // Base radius scales with snake length
     const lengthMultiplier = 1 + (this.length - CONFIG.PHYSICS.INITIAL_LENGTH) * 0.02;
-    const baseHeadRadius = this.headRadius;
-    const baseBodyRadius = this.bodyRadius;
     
     if (segmentIndex === 0) {
-      return baseHeadRadius;
+      return this.headRadius;
     } else {
       // Gradual taper toward the tail
       const taperFactor = Math.max(0.7, 1 - (segmentIndex - 1) * 0.03);
-      return baseBodyRadius * taperFactor;
+      return this.bodyRadius * taperFactor;
     }
   }
   
@@ -247,8 +263,6 @@ export class Snake {
   // Beautiful rendering with gradient and effects
   draw(ctx, camera) {
     if (!this.isAlive) return;
-    
-    console.log('🎨 Drawing', this.segments.length, 'segments');
     
     // Draw all segments from tail to head for proper layering
     for (let i = this.segments.length - 1; i >= 0; i--) {
@@ -296,33 +310,46 @@ export class Snake {
     }
   }
   
-  // Debug trail rendering (show segment connections)
+  // Enhanced debug trail rendering
   drawTrail(ctx, camera) {
-    if (this.segments.length < 2) return;
+    if (this.trail.length < 2) return;
     
-    // Draw lines between segments
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.lineWidth = 2;
+    // Draw the actual trail path (what the head traveled)
+    ctx.strokeStyle = 'rgba(255, 255, 0, 0.6)';
+    ctx.lineWidth = 3;
     ctx.beginPath();
     
-    for (let i = 0; i < this.segments.length; i++) {
-      const segment = this.segments[i];
+    for (let i = 0; i < this.trail.length; i++) {
+      const point = this.trail[i];
       if (i === 0) {
-        ctx.moveTo(segment.position.x, segment.position.y);
+        ctx.moveTo(point.position.x, point.position.y);
       } else {
-        ctx.lineTo(segment.position.x, segment.position.y);
+        ctx.lineTo(point.position.x, point.position.y);
       }
     }
-    
     ctx.stroke();
     
-    // Draw target positions (red dots)
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-    for (let i = 1; i < this.segments.length; i++) {
-      const segment = this.segments[i];
+    // Draw trail sample points
+    ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+    for (const point of this.trail) {
       ctx.beginPath();
-      ctx.arc(segment.targetPosition.x, segment.targetPosition.y, 3, 0, Math.PI * 2);
+      ctx.arc(point.position.x, point.position.y, 2, 0, Math.PI * 2);
       ctx.fill();
+    }
+    
+    // Draw segment connections to show they follow the trail
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.4)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < this.segments.length; i++) {
+      const segment = this.segments[i];
+      const targetDistance = i * CONFIG.PHYSICS.SEGMENT_GAP;
+      const trailPosition = this.getPositionAtDistance(targetDistance);
+      
+      // Draw line from segment to its trail position
+      ctx.beginPath();
+      ctx.moveTo(segment.position.x, segment.position.y);
+      ctx.lineTo(trailPosition.x, trailPosition.y);
+      ctx.stroke();
     }
   }
   
