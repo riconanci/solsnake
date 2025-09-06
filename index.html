@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SolSnake.io</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0a0a0a;
+            font-family: 'Courier New', monospace;
+            color: #00ff88;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        
+        #gameContainer {
+            position: relative;
+            border: 2px solid #00ff88;
+            background: #111;
+        }
+        
+        #gameCanvas {
+            display: block;
+            background: #000;
+        }
+        
+        #hud {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            font-size: 14px;
+            z-index: 10;
+        }
+        
+        .hud-item {
+            margin-bottom: 5px;
+        }
+        
+        #controls {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        
+        .loading {
+            text-align: center;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas" width="1200" height="800"></canvas>
+        
+        <div id="hud">
+            <div class="hud-item">Length: <span id="length">3</span></div>
+            <div class="hud-item">Score: <span id="score">0</span></div>
+            <div class="hud-item">Speed: <span id="speed">2.0</span></div>
+        </div>
+        
+        <div id="controls">
+            WASD or Arrow Keys to move • Space to boost (Phase 4)
+        </div>
+    </div>
+
+    <!-- We'll load as modules in Phase 1 -->
+    <script type="module">
+        // Import our game modules
+        import { CONFIG } from './src/config.js';
+        import { Game } from './src/game.js';
+        
+        // Initialize game when page loads
+        window.addEventListener('load', () => {
+            const canvas = document.getElementById('gameCanvas');
+            const game = new Game(canvas);
+            game.start();
+        });
+    </script>
+</body>
+</html>
