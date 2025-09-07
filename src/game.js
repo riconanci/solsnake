@@ -1,4 +1,4 @@
-// File: src/game.js - Updated with length-based boost and debug keys
+// File: src/game.js - Updated with FIXED camera zoom scaling to 1500 length
 import { CONFIG } from './config.js';
 import { Snake } from './snake.js';
 import { PelletManager } from './pellets.js';
@@ -96,6 +96,13 @@ export class Game {
             console.log('🧪 DEBUG: Added length! New length:', this.playerSnake.length);
           }
           break;
+        // NEW: Debug key for big length boost
+        case 'KeyB':
+          if (CONFIG.DEBUG.ENABLE_DEBUG_KEYS && this.playerSnake) {
+            this.playerSnake.debugAddBigLength();
+            console.log('🧪 DEBUG: Added BIG length! New length:', this.playerSnake.length);
+          }
+          break;
         // NEW: Debug key to test low length warning
         case 'KeyK':
           if (CONFIG.DEBUG.ENABLE_DEBUG_KEYS && this.playerSnake) {
@@ -171,7 +178,7 @@ export class Game {
       this.playerSnake.grow(pellet.value);
     }
     
-    // Update camera with new boost zoom system
+    // Update camera with new camera zoom system
     this.updateCamera(deltaTime);
     
     // Update HUD
@@ -201,35 +208,52 @@ export class Game {
     this.camera.zoom += (this.camera.targetZoom - this.camera.zoom) * smoothFactor;
   }
   
+  // FIXED: Camera zoom scaling - smooth progression with no jumps at 1000 length
   updateCameraZoom() {
-    // NEW: Extreme diminishing returns camera zoom for MASSIVE snakes
-    const lengthDiff = Math.max(0, this.playerSnake.length - 5);
+    const currentLength = this.playerSnake.length;
+    const initialLength = CONFIG.PHYSICS.INITIAL_LENGTH;
     
+    // Calculate zoom out factor with cap at 1500 length
+    const lengthForZoom = Math.min(currentLength, 1500); // Cap zoom calculation at 1500
+    const lengthDiff = Math.max(0, lengthForZoom - initialLength);
+    
+    // FIXED: Single smooth curve from 0 to 1500 length - no jumps!
     let zoomOutFactor;
-    if (lengthDiff > 1000) {
-      // Extreme diminishing returns for mega snakes - tiny changes after 1000
-      zoomOutFactor = 0.25 + Math.log(lengthDiff / 1000) * 0.02; // Very small increases
-    } else if (lengthDiff > 100) {
-      // Strong diminishing returns for large snakes
-      zoomOutFactor = 0.1 + Math.log(lengthDiff / 100) * 0.15;
+    
+    if (lengthDiff === 0) {
+      zoomOutFactor = 0;
     } else {
-      // Normal scaling for smaller snakes
-      zoomOutFactor = lengthDiff * 0.001;
+      // Use a single logarithmic curve that scales smoothly from 0 to max
+      const maxLengthDiff = 1500 - initialLength; // 1495 length range
+      const progress = lengthDiff / maxLengthDiff; // 0 to 1
+      
+      // Logarithmic curve: starts slow, accelerates, then slows down
+      const logProgress = Math.log(1 + progress * 19) / Math.log(20); // 0 to 1, smooth curve
+      
+      // Maximum zoom out factor (much more conservative)
+      const maxZoomOut = 0.35; // Base zoom 0.6 - 0.35 = minimum 0.25 zoom
+      
+      zoomOutFactor = logProgress * maxZoomOut;
     }
     
     let baseZoom = CONFIG.CAMERA.BASE_ZOOM - zoomOutFactor;
     
     // Set reasonable zoom limits
-    baseZoom = Math.max(0.15, Math.min(baseZoom, CONFIG.CAMERA.BASE_ZOOM)); // Never zoom out beyond 0.15
+    baseZoom = Math.max(0.25, Math.min(baseZoom, CONFIG.CAMERA.BASE_ZOOM));
     
-    // NEW: Boost zooms IN (reduces vision, increases risk)
+    // Boost zooms IN (reduces vision, increases risk)
     if (this.playerSnake.isBoosting) {
       baseZoom *= CONFIG.CAMERA.BOOST_ZOOM_FACTOR; // Multiply to zoom IN
     }
     
     this.camera.targetZoom = baseZoom;
     
-    console.log(`📷 Camera zoom: ${baseZoom.toFixed(3)} (length: ${this.playerSnake.length}, zoomOut: ${zoomOutFactor.toFixed(4)})`);
+    // Debug logging with length cap info
+    if (currentLength % 50 === 0 || currentLength > 1500) {
+      const cappedInfo = currentLength > 1500 ? ` (CAPPED at 1500)` : '';
+      const progress = Math.min(lengthDiff / (1500 - initialLength), 1);
+      console.log(`📷 Camera zoom: ${baseZoom.toFixed(3)} | Length: ${currentLength} -> Progress: ${(progress*100).toFixed(1)}%${cappedInfo} | ZoomOut: ${zoomOutFactor.toFixed(4)}`);
+    }
   }
   
   render() {
@@ -357,6 +381,7 @@ export class Game {
       `Length: ${this.playerSnake.length.toFixed(1)} | Value: ${Math.round(this.playerSnake.score)}`,
       `Speed: ${this.playerSnake.speed.toFixed(1)} | Zoom: ${this.camera.zoom.toFixed(2)}`,
       `Boost: ${this.playerSnake.isBoosting ? 'ON' : 'OFF'} | Burned: ${this.playerSnake.lengthBurned.toFixed(1)}`,
+      `Camera: ${this.playerSnake.length > 1500 ? 'CAPPED at 1500' : 'Scaling'}`,
       ``,
       `Controls:`,
       `Mouse: Always follows cursor`,
@@ -391,7 +416,7 @@ export class Game {
       this.ctx.textAlign = 'left';
     }
     
-    // NEW: Boost system feedback
+    // Boost system feedback
     if (this.playerSnake.isBoosting) {
       this.ctx.fillStyle = 'rgba(255, 68, 68, 0.8)';
       this.ctx.font = '16px monospace';
@@ -400,12 +425,21 @@ export class Game {
       this.ctx.textAlign = 'left';
     }
     
-    // NEW: Low length warning
+    // Low length warning
     if (this.playerSnake.length < CONFIG.BOOST.MIN_LENGTH_TO_BOOST + 2) {
       this.ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
       this.ctx.font = '14px monospace';
       this.ctx.textAlign = 'center';
       this.ctx.fillText('⚠️ LOW LENGTH - BOOST DISABLED', this.canvas.width / 2, 70);
+      this.ctx.textAlign = 'left';
+    }
+    
+    // NEW: Camera cap indicator for 1500+ length
+    if (this.playerSnake.length > 1500) {
+      this.ctx.fillStyle = 'rgba(0, 255, 255, 0.8)';
+      this.ctx.font = '14px monospace';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('📷 MAXIMUM ZOOM REACHED', this.canvas.width / 2, 90);
       this.ctx.textAlign = 'left';
     }
   }

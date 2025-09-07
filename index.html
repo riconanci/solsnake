@@ -321,10 +321,19 @@
             font-weight: bold;
         }
 
-        /* Length highlight box */
+        /* Length highlight box (yellow) */
         .length-highlight {
             background: rgba(255, 255, 0, 0.1);
             border: 1px solid #ffff00;
+            border-radius: 4px;
+            padding: 0.3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Value highlight box (green) */
+        .value-highlight {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid #00ff88;
             border-radius: 4px;
             padding: 0.3rem;
             margin-bottom: 0.5rem;
@@ -534,6 +543,7 @@
 
         <!-- Enhanced HUD (shown during gameplay) -->
         <div id="gameHUD" style="display: none;">
+            <!-- Length box (yellow) -->
             <div class="length-highlight">
                 <div class="hud-item" style="margin-bottom: 0;">
                     <span>Length:</span>
@@ -541,8 +551,16 @@
                 </div>
             </div>
             
+            <!-- Value box (green) - RESTORED! -->
+            <div class="value-highlight">
+                <div class="hud-item" style="margin-bottom: 0;">
+                    <span>Value:</span>
+                    <span class="hud-value" id="hudValue">0.0</span>
+                </div>
+            </div>
+            
             <div class="hud-item">
-                <span>Value:</span>
+                <span>Score:</span>
                 <span class="hud-value" id="hudScore">0</span>
             </div>
             <div class="hud-item">
@@ -689,13 +707,15 @@
                 
                 // Update all HUD elements with current snake values
                 const lengthElement = document.getElementById('hudLength');
+                const valueElement = document.getElementById('hudValue');  // GREEN BOX RESTORED!
                 const scoreElement = document.getElementById('hudScore');
                 const killsElement = document.getElementById('hudKills');
                 const speedElement = document.getElementById('hudSpeed');
                 const buyinElement = document.getElementById('buyinStatus');
                 
                 if (lengthElement) lengthElement.textContent = snake.length.toFixed(1);
-                if (scoreElement) scoreElement.textContent = snake.value.toFixed(2); // Show crypto value, not score
+                if (valueElement) valueElement.textContent = snake.value.toFixed(2);  // Show crypto value
+                if (scoreElement) scoreElement.textContent = snake.score.toFixed(0);
                 if (killsElement) killsElement.textContent = '0'; // Will be updated when multiplayer is added
                 if (speedElement) speedElement.textContent = snake.speed.toFixed(1);
                 if (buyinElement) buyinElement.textContent = '✓ PAID';

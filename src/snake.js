@@ -1,4 +1,4 @@
-// File: src/snake.js - CLEAN VERSION - Speed only decreases with length
+// File: src/snake.js - FIXED VERSION - Proper long snake segment handling
 import { CONFIG } from './config.js';
 import { Vector2D, MathUtils } from './utils.js';
 
@@ -21,9 +21,10 @@ export class Snake {
     this.lastDecayTime = 0;
     this.decayAccumulator = 0;
     
-    // Trail buffer system - stores exact path the head traveled
+    // FIXED: Trail buffer system - much larger buffer for very long snakes
     this.trail = [];
-    this.maxTrailLength = 1000; // Enough for very long snakes
+    this.maxTrailLength = 5000; // Increased from 1000 - enough for massive snakes
+    this.maxTrailDistance = 0;  // Track maximum distance we need
     
     // Segments positioned along trail at specific distances
     this.segments = [];
@@ -74,10 +75,13 @@ export class Snake {
       arcLength: 0
     }];
     
+    // FIXED: Calculate proper spacing and ensure we have enough trail
+    this.updateMaxTrailDistance();
+    
     // Initialize segments at proper distances along the trail
     this.segments = [];
     for (let i = 0; i < this.length; i++) {
-      const distance = i * CONFIG.PHYSICS.SEGMENT_GAP;
+      const distance = this.calculateSegmentDistance(i);
       const position = this.getPositionAtDistance(distance);
       this.segments.push({
         position: position,
@@ -87,6 +91,53 @@ export class Snake {
     }
     
     console.log('🐍 Initialized trail buffer with', this.segments.length, 'segments');
+  }
+  
+  // FIXED: Calculate proper segment distance with better scaling
+  calculateSegmentDistance(segmentIndex) {
+    if (segmentIndex === 0) return 0; // Head is always at distance 0
+    
+    const baseGap = CONFIG.PHYSICS.SEGMENT_GAP;
+    
+    // IMPROVED: Better segment spacing that handles very long snakes
+    // Use a logarithmic scale for very long snakes to prevent overcrowding
+    let cumulativeDistance = 0;
+    
+    for (let i = 1; i <= segmentIndex; i++) {
+      let segmentGap = baseGap;
+      
+      // Apply spacing adjustments based on snake length
+      if (this.length > 500) {
+        // For very long snakes, increase spacing more aggressively
+        const lengthFactor = Math.min(3.0, 1.0 + Math.log10(this.length / 100));
+        segmentGap = baseGap * lengthFactor;
+      } else if (this.length > 100) {
+        // For long snakes, moderate spacing increase
+        const lengthFactor = 1.0 + (this.length - 100) / 400; // Gradual increase
+        segmentGap = baseGap * lengthFactor;
+      }
+      
+      // Also consider segment position - tail segments can be spaced further apart
+      if (i > this.length * 0.7) {
+        segmentGap *= 1.2; // Tail segments slightly more spaced
+      }
+      
+      cumulativeDistance += segmentGap;
+    }
+    
+    return cumulativeDistance;
+  }
+  
+  // FIXED: Update maximum trail distance needed
+  updateMaxTrailDistance() {
+    if (this.segments.length > 0) {
+      const lastSegment = this.segments[this.segments.length - 1];
+      this.maxTrailDistance = Math.max(this.maxTrailDistance, lastSegment.distance + 200); // 200px buffer
+    } else {
+      // Estimate based on length
+      const estimatedDistance = this.length * CONFIG.PHYSICS.SEGMENT_GAP * 2; // Conservative estimate
+      this.maxTrailDistance = Math.max(this.maxTrailDistance, estimatedDistance);
+    }
   }
   
   update(deltaTime, turnDirection, boost) {
@@ -141,7 +192,7 @@ export class Snake {
     // Update head position
     this.position = newHeadPosition;
     
-    // Update all segments to follow the exact trail path
+    // FIXED: Update all segments to follow the exact trail path with proper distances
     this.updateSegmentsAlongTrail();
   }
   
@@ -206,38 +257,30 @@ export class Snake {
     this.updateVisualSize();
   }
   
+  // FIXED: Better segment positioning along trail
   updateSegmentsAlongTrail() {
+    // Recalculate all segment distances first
     for (let i = 0; i < this.segments.length; i++) {
-      const segment = this.segments[i];
-      
-      // Extreme diminishing returns segment spacing for MASSIVE snakes
-      const baseGap = CONFIG.PHYSICS.SEGMENT_GAP;
-      const lengthDiff = Math.max(0, this.length - 5);
-      
-      let spacingFactor;
-      if (lengthDiff > 1000) {
-        spacingFactor = 3.0 + Math.log(lengthDiff / 1000) * 0.5;
-      } else if (lengthDiff > 100) {
-        spacingFactor = 1.0 + Math.log(lengthDiff / 100) * 2.0;
-      } else {
-        spacingFactor = Math.sqrt(lengthDiff) * 0.3;
-      }
-      
-      const lengthMultiplier = 1.0 + spacingFactor;
-      const dynamicGap = baseGap * lengthMultiplier;
-      const targetDistance = i * dynamicGap;
-      
+      const targetDistance = this.calculateSegmentDistance(i);
       const position = this.getPositionAtDistance(targetDistance);
-      segment.position = position;
-      segment.distance = targetDistance;
+      
+      this.segments[i].position = position;
+      this.segments[i].distance = targetDistance;
     }
+    
+    // Update trail distance tracking
+    this.updateMaxTrailDistance();
   }
   
+  // FIXED: Improved trail management
   addToTrail(newPosition) {
     const lastTrailPoint = this.trail[0];
     const distance = lastTrailPoint.position.distanceTo(newPosition);
     
-    if (distance >= CONFIG.PHYSICS.TRAIL_SAMPLE_RATE) {
+    // Use a smaller sample rate for more precise trail following
+    const minSampleDistance = Math.min(CONFIG.PHYSICS.TRAIL_SAMPLE_RATE, 2.0);
+    
+    if (distance >= minSampleDistance) {
       const newArcLength = lastTrailPoint.arcLength + distance;
       
       this.trail.unshift({
@@ -245,17 +288,28 @@ export class Snake {
         arcLength: newArcLength
       });
       
-      const maxTrailDistance = this.length * CONFIG.PHYSICS.SEGMENT_GAP + 100;
+      // FIXED: Keep enough trail for the longest possible distance needed
+      const requiredTrailDistance = this.maxTrailDistance + 100; // Extra buffer
+      
+      // Remove old trail points that are too far behind
       this.trail = this.trail.filter(point => 
-        newArcLength - point.arcLength <= maxTrailDistance
+        newArcLength - point.arcLength <= requiredTrailDistance
       );
       
+      // Also enforce maximum trail length to prevent memory issues
       if (this.trail.length > this.maxTrailLength) {
         this.trail = this.trail.slice(0, this.maxTrailLength);
+        console.log(`⚠️ Trail truncated to ${this.maxTrailLength} points`);
+      }
+      
+      // Debug logging for very long snakes
+      if (this.length > 100 && this.length % 50 === 0) {
+        console.log(`🐍 Long snake debug: Length=${this.length}, Trail points=${this.trail.length}, Max distance=${this.maxTrailDistance.toFixed(1)}`);
       }
     }
   }
   
+  // FIXED: More robust position interpolation
   getPositionAtDistance(targetDistance) {
     if (this.trail.length === 0) {
       return new Vector2D(this.position.x, this.position.y);
@@ -268,14 +322,19 @@ export class Snake {
     const headArcLength = this.trail[0].arcLength;
     const actualTargetDistance = headArcLength - targetDistance;
     
+    // If target is at or beyond the head, return head position
     if (actualTargetDistance >= headArcLength) {
       return this.trail[0].position;
     }
     
-    if (actualTargetDistance <= this.trail[this.trail.length - 1].arcLength) {
-      return this.trail[this.trail.length - 1].position;
+    // If target is beyond our trail, return the farthest point we have
+    const lastPoint = this.trail[this.trail.length - 1];
+    if (actualTargetDistance <= lastPoint.arcLength) {
+      console.log(`⚠️ Segment beyond trail: target=${actualTargetDistance.toFixed(1)}, trail_end=${lastPoint.arcLength.toFixed(1)}`);
+      return lastPoint.position;
     }
     
+    // Find the two trail points that bracket our target distance
     for (let i = 0; i < this.trail.length - 1; i++) {
       const currentPoint = this.trail[i];
       const nextPoint = this.trail[i + 1];
@@ -291,6 +350,7 @@ export class Snake {
         
         const t = (actualTargetDistance - nextPoint.arcLength) / segmentLength;
         
+        // Linear interpolation between the two points
         return new Vector2D(
           nextPoint.position.x + (currentPoint.position.x - nextPoint.position.x) * t,
           nextPoint.position.y + (currentPoint.position.y - nextPoint.position.y) * t
@@ -298,9 +358,11 @@ export class Snake {
       }
     }
     
+    // Fallback to last point
     return this.trail[this.trail.length - 1].position;
   }
   
+  // FIXED: Better growth handling
   grow(amount = 1) {
     const oldLength = this.length;
     const oldSpeed = this.speed;
@@ -314,13 +376,8 @@ export class Snake {
     for (let i = 0; i < amount; i++) {
       const segmentIndex = this.segments.length;
       
-      // NEW: Use minimal spacing that scales with segment size
-      const baseGap = CONFIG.PHYSICS.SEGMENT_GAP;
-      const segmentRadius = this.getSegmentRadius(segmentIndex);
-      const radiusMultiplier = segmentRadius / 10;
-      const dynamicGap = baseGap * (0.8 + radiusMultiplier * 0.2);
-      
-      const distance = segmentIndex * dynamicGap;
+      // Calculate proper distance for new segment
+      const distance = this.calculateSegmentDistance(segmentIndex);
       const position = this.getPositionAtDistance(distance);
       
       this.segments.push({
@@ -328,7 +385,12 @@ export class Snake {
         distance: distance,
         isHead: false
       });
+      
+      console.log(`🔧 Added segment ${segmentIndex} at distance ${distance.toFixed(1)}`);
     }
+    
+    // Update trail requirements
+    this.updateMaxTrailDistance();
     
     this.updateVisualSize();
     
@@ -400,11 +462,11 @@ export class Snake {
     const oldSpeed = this.speed;
     
     console.log(`🧪 DEBUG: Adding ${amount} length`);
-    console.log(`🧪 BEFORE: Length=${oldLength}, Speed=${oldSpeed.toFixed(1)}`);
+    console.log(`🧪 BEFORE: Length=${oldLength}, Speed=${oldSpeed.toFixed(1)}, Segments=${this.segments.length}, Trail points=${this.trail.length}`);
     
     this.grow(amount);
     
-    console.log(`🧪 AFTER: Length=${this.length}, Speed=${this.speed.toFixed(1)}`);
+    console.log(`🧪 AFTER: Length=${this.length}, Speed=${this.speed.toFixed(1)}, Segments=${this.segments.length}, Trail points=${this.trail.length}`);
   }
   
   // NEW: Debug function for big length boost
@@ -416,11 +478,32 @@ export class Snake {
     this.grow(amount);
   }
   
-  // Update visual size based on current length
+  // FIXED: Update visual size based on current length - scales to 6x at 2000 length
   updateVisualSize() {
-    const lengthMultiplier = 1 + (this.length - CONFIG.PHYSICS.INITIAL_LENGTH) * 0.02;
-    this.headRadius = 12 * lengthMultiplier;
-    this.bodyRadius = 10 * lengthMultiplier;
+    const currentLength = this.length;
+    const initialLength = CONFIG.PHYSICS.INITIAL_LENGTH;
+    
+    // More aggressive scaling - from 1.0x to 6.0x over 2000 length
+    let sizeMultiplier;
+    
+    if (currentLength <= initialLength) {
+      sizeMultiplier = 1.0; // Base size for starting length
+    } else if (currentLength >= 2000) {
+      sizeMultiplier = 6.0; // Maximum 6x size at 2000 length
+    } else {
+      // Logarithmic scaling for smooth, progressive growth
+      const lengthProgress = (currentLength - initialLength) / (2000 - initialLength);
+      const logProgress = Math.log(1 + lengthProgress * 9) / Math.log(10); // 0 to 1 logarithmic curve
+      sizeMultiplier = 1.0 + logProgress * 5.0; // 1.0x to 6.0x (5.0 range)
+    }
+    
+    this.headRadius = 12 * sizeMultiplier;
+    this.bodyRadius = 10 * sizeMultiplier;
+    
+    // Debug logging for size changes
+    if (currentLength % 50 === 0 && currentLength > initialLength) {
+      console.log(`📏 Size update: Length=${currentLength} -> Multiplier=${sizeMultiplier.toFixed(2)}x (Head: ${this.headRadius.toFixed(1)}, Body: ${this.bodyRadius.toFixed(1)})`);
+    }
   }
   
   getSegmentRadius(segmentIndex) {
