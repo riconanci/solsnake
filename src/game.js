@@ -1,4 +1,4 @@
-// File: src/game.js
+// File: src/game.js - Updated with length-based boost and debug keys
 import { CONFIG } from './config.js';
 import { Snake } from './snake.js';
 import { PelletManager } from './pellets.js';
@@ -54,24 +54,13 @@ export class Game {
     const startY = CONFIG.WORLD.HEIGHT / 2;
     
     console.log('🐍 Creating snake at:', startX, startY);
-    console.log('🌍 World size:', CONFIG.WORLD.WIDTH, 'x', CONFIG.WORLD.HEIGHT);
     this.playerSnake = new Snake(startX, startY, 0);
     
-    console.log('🐍 Snake created:', this.playerSnake);
-    console.log('🐍 Snake position:', this.playerSnake.position);
-    console.log('🐍 Snake segments:', this.playerSnake.segments?.length || 'NO SEGMENTS');
-    console.log('🐍 Snake alive:', this.playerSnake.isAlive);
+    console.log('🐍 Snake created with length-based boost system');
     
     // Create pellet manager
     console.log('🍎 Creating pellet manager...');
     this.pelletManager = new PelletManager(CONFIG.WORLD.WIDTH, CONFIG.WORLD.HEIGHT);
-    
-    // Log first few pellet positions
-    console.log('🍎 First 5 pellet positions:');
-    for (let i = 0; i < Math.min(5, this.pelletManager.pellets.length); i++) {
-      const pellet = this.pelletManager.pellets[i];
-      console.log(`   Pellet ${i}: (${pellet.position.x.toFixed(1)}, ${pellet.position.y.toFixed(1)})`);
-    }
     
     // Initialize camera
     this.camera.x = startX;
@@ -99,6 +88,20 @@ export class Game {
           break;
         case 'KeyR':
           this.restart();
+          break;
+        // NEW: Debug key to add length for testing boost system
+        case 'KeyL':
+          if (CONFIG.DEBUG.ENABLE_DEBUG_KEYS && this.playerSnake) {
+            this.playerSnake.debugAddLength();
+            console.log('🧪 DEBUG: Added length! New length:', this.playerSnake.length);
+          }
+          break;
+        // NEW: Debug key to test low length warning
+        case 'KeyK':
+          if (CONFIG.DEBUG.ENABLE_DEBUG_KEYS && this.playerSnake) {
+            this.playerSnake.length = Math.max(3, this.playerSnake.length - 3);
+            console.log('🧪 DEBUG: Reduced length! New length:', this.playerSnake.length);
+          }
           break;
       }
     });
@@ -137,7 +140,7 @@ export class Game {
     const movement = this.inputHandler.getMovementInput(this.playerSnake.position);
     const boost = this.inputHandler.isBoostPressed();
     
-    // Update snake
+    // Update snake with new boost system
     this.playerSnake.update(deltaTime, movement, boost);
     
     // Check world boundaries
@@ -146,12 +149,11 @@ export class Game {
     // Update pellets
     this.pelletManager.update(deltaTime);
     
-    // Check pellet collisions (SIMPLE DISTANCE CHECK)
+    // Check pellet collisions
     const headRadius = this.playerSnake.headRadius;
     const magnetRadius = CONFIG.PHYSICS.MAGNET_RADIUS;
     const totalPickupRadius = headRadius + magnetRadius;
     
-    // MANUAL collision check with each pellet
     const collectedPellets = [];
     for (const pellet of this.pelletManager.pellets) {
       if (!pellet.isCollected) {
@@ -159,7 +161,7 @@ export class Game {
         if (distance <= totalPickupRadius) {
           pellet.collect();
           collectedPellets.push(pellet);
-          console.log(`✅ COLLECTED PELLET! Distance: ${distance.toFixed(1)}, Required: ${totalPickupRadius.toFixed(1)}`);
+          console.log(`✅ COLLECTED PELLET! Distance: ${distance.toFixed(1)}`);
         }
       }
     }
@@ -169,7 +171,7 @@ export class Game {
       this.playerSnake.grow(pellet.value);
     }
     
-    // Update camera
+    // Update camera with new boost zoom system
     this.updateCamera(deltaTime);
     
     // Update HUD
@@ -200,14 +202,34 @@ export class Game {
   }
   
   updateCameraZoom() {
-    let baseZoom = CONFIG.CAMERA.BASE_ZOOM - (this.playerSnake.length * CONFIG.CAMERA.ZOOM_PER_LENGTH);
-    baseZoom = Math.max(baseZoom, CONFIG.CAMERA.MAX_ZOOM_OUT);
+    // NEW: Extreme diminishing returns camera zoom for MASSIVE snakes
+    const lengthDiff = Math.max(0, this.playerSnake.length - 5);
     
+    let zoomOutFactor;
+    if (lengthDiff > 1000) {
+      // Extreme diminishing returns for mega snakes - tiny changes after 1000
+      zoomOutFactor = 0.25 + Math.log(lengthDiff / 1000) * 0.02; // Very small increases
+    } else if (lengthDiff > 100) {
+      // Strong diminishing returns for large snakes
+      zoomOutFactor = 0.1 + Math.log(lengthDiff / 100) * 0.15;
+    } else {
+      // Normal scaling for smaller snakes
+      zoomOutFactor = lengthDiff * 0.001;
+    }
+    
+    let baseZoom = CONFIG.CAMERA.BASE_ZOOM - zoomOutFactor;
+    
+    // Set reasonable zoom limits
+    baseZoom = Math.max(0.15, Math.min(baseZoom, CONFIG.CAMERA.BASE_ZOOM)); // Never zoom out beyond 0.15
+    
+    // NEW: Boost zooms IN (reduces vision, increases risk)
     if (this.playerSnake.isBoosting) {
-      baseZoom *= CONFIG.CAMERA.BOOST_ZOOM_FACTOR;
+      baseZoom *= CONFIG.CAMERA.BOOST_ZOOM_FACTOR; // Multiply to zoom IN
     }
     
     this.camera.targetZoom = baseZoom;
+    
+    console.log(`📷 Camera zoom: ${baseZoom.toFixed(3)} (length: ${this.playerSnake.length}, zoomOut: ${zoomOutFactor.toFixed(4)})`);
   }
   
   render() {
@@ -241,37 +263,13 @@ export class Game {
     if (this.showMouseDebug) {
       this.drawMouseDebug();
       
-      // Show pellet pickup radius (scales with head size - updates as snake grows)
+      // Show pellet pickup radius
       const pickupRadius = this.playerSnake.headRadius + CONFIG.PHYSICS.MAGNET_RADIUS;
       this.ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
       this.ctx.lineWidth = 3;
       this.ctx.beginPath();
       this.ctx.arc(this.playerSnake.position.x, this.playerSnake.position.y, pickupRadius, 0, Math.PI * 2);
       this.ctx.stroke();
-      
-      // Show nearby pellet positions, distances, and their collision circles
-      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      this.ctx.font = '10px monospace';
-      for (const pellet of this.pelletManager.pellets) {
-        if (!pellet.isCollected) {
-          const distance = this.playerSnake.position.distanceTo(pellet.position);
-          const requiredDistance = pellet.radius + pickupRadius;
-          
-          if (distance < requiredDistance + 50) { // Show pellets near collision range
-            // Draw pellet collision circle
-            this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.3)';
-            this.ctx.lineWidth = 2;
-            this.ctx.beginPath();
-            this.ctx.arc(pellet.position.x, pellet.position.y, pellet.radius, 0, Math.PI * 2);
-            this.ctx.stroke();
-            
-            // Show distance text
-            const color = distance <= requiredDistance ? '#00ff00' : '#ffffff';
-            this.ctx.fillStyle = color;
-            this.ctx.fillText(`${distance.toFixed(1)}/${requiredDistance.toFixed(1)}`, pellet.position.x + 10, pellet.position.y - 10);
-          }
-        }
-      }
     }
     
     // Restore context
@@ -284,13 +282,13 @@ export class Game {
   drawMouseDebug() {
     const mouseWorld = this.inputHandler.getWorldMousePosition();
     
-    // Draw mouse cursor in world (ALWAYS visible since mouse always controls)
+    // Draw mouse cursor in world
     this.ctx.fillStyle = 'rgba(255, 0, 255, 0.8)';
     this.ctx.beginPath();
     this.ctx.arc(mouseWorld.x, mouseWorld.y, 8, 0, Math.PI * 2);
     this.ctx.fill();
     
-    // Draw line from snake to mouse (ALWAYS shown)
+    // Draw line from snake to mouse
     const direction = this.inputHandler.getMouseDirection(this.playerSnake.position);
     if (direction) {
       this.ctx.strokeStyle = 'rgba(255, 0, 255, 0.4)';
@@ -356,14 +354,16 @@ export class Game {
       `FPS: ${Math.round(1000 / (performance.now() - this.lastTime))}`,
       `Snake: ${Math.round(this.playerSnake.position.x)}, ${Math.round(this.playerSnake.position.y)}`,
       `Mouse: ${Math.round(mouseWorld.x)}, ${Math.round(mouseWorld.y)}`,
-      `Length: ${this.playerSnake.length} | Score: ${Math.round(this.playerSnake.score)}`,
+      `Length: ${this.playerSnake.length.toFixed(1)} | Value: ${Math.round(this.playerSnake.score)}`,
       `Speed: ${this.playerSnake.speed.toFixed(1)} | Zoom: ${this.camera.zoom.toFixed(2)}`,
-      `Boost: ${this.playerSnake.isBoosting ? 'ON' : 'OFF'}`,
+      `Boost: ${this.playerSnake.isBoosting ? 'ON' : 'OFF'} | Burned: ${this.playerSnake.lengthBurned.toFixed(1)}`,
       ``,
       `Controls:`,
       `Mouse: Always follows cursor`,
       `WASD/Arrows: Override mouse`,
-      `Click/Space: Boost only`,
+      `Click/Space: Boost (uses length)`,
+      `L: Add length (+10) | B: Big boost (+25)`,
+      `K: Remove length (debug)`,
       `T: Trail debug | M: Mouse debug`,
       `I: Toggle info | R: Restart`
     ];
@@ -383,28 +383,47 @@ export class Game {
       
       this.ctx.fillStyle = '#ffffff';
       this.ctx.font = '24px monospace';
-      this.ctx.fillText(`Final Length: ${this.playerSnake.length}`, this.canvas.width / 2, this.canvas.height / 2);
-      this.ctx.fillText(`Score: ${this.playerSnake.score}`, this.canvas.width / 2, this.canvas.height / 2 + 30);
-      this.ctx.fillText('Press R to restart', this.canvas.width / 2, this.canvas.height / 2 + 80);
+      this.ctx.fillText(`Final Length: ${this.playerSnake.length.toFixed(1)}`, this.canvas.width / 2, this.canvas.height / 2);
+      this.ctx.fillText(`Value: ${this.playerSnake.score}`, this.canvas.width / 2, this.canvas.height / 2 + 30);
+      this.ctx.fillText(`Length Burned: ${this.playerSnake.lengthBurned.toFixed(1)}`, this.canvas.width / 2, this.canvas.height / 2 + 60);
+      this.ctx.fillText('Press R to restart', this.canvas.width / 2, this.canvas.height / 2 + 100);
       
       this.ctx.textAlign = 'left';
     }
     
-    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    this.ctx.font = '14px monospace';
-    this.ctx.textAlign = 'center';
-    this.ctx.fillText('Mouse steers • Click to boost', this.canvas.width / 2, 30);
-    this.ctx.textAlign = 'left';
+    // NEW: Boost system feedback
+    if (this.playerSnake.isBoosting) {
+      this.ctx.fillStyle = 'rgba(255, 68, 68, 0.8)';
+      this.ctx.font = '16px monospace';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('🚀 BOOSTING - BURNING LENGTH', this.canvas.width / 2, 50);
+      this.ctx.textAlign = 'left';
+    }
+    
+    // NEW: Low length warning
+    if (this.playerSnake.length < CONFIG.BOOST.MIN_LENGTH_TO_BOOST + 2) {
+      this.ctx.fillStyle = 'rgba(255, 255, 0, 0.8)';
+      this.ctx.font = '14px monospace';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('⚠️ LOW LENGTH - BOOST DISABLED', this.canvas.width / 2, 70);
+      this.ctx.textAlign = 'left';
+    }
   }
   
   updateHUD() {
+    // Update the debug HUD elements (top-left corner)
     const lengthElement = document.getElementById('length');
     const scoreElement = document.getElementById('score');
     const speedElement = document.getElementById('speed');
     
-    if (lengthElement) lengthElement.textContent = this.playerSnake.length.toString();
+    if (lengthElement) lengthElement.textContent = this.playerSnake.length.toFixed(1);
     if (scoreElement) scoreElement.textContent = Math.round(this.playerSnake.score).toString();
     if (speedElement) speedElement.textContent = this.playerSnake.speed.toFixed(1);
+    
+    // Also update the game HUD (green HUD) if the UI system is available
+    if (window.gameUI && typeof window.gameUI.updateGameHUD === 'function') {
+      window.gameUI.updateGameHUD();
+    }
   }
   
   restart() {

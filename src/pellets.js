@@ -3,7 +3,7 @@ import { CONFIG } from './config.js';
 import { Vector2D, Random } from './utils.js';
 
 export class Pellet {
-  constructor(x, y, value = 1, color = '#ffaa00') {
+  constructor(x, y, value = 0.5, color = '#ffaa00') {
     this.position = new Vector2D(x, y);
     this.value = value;
     this.color = color;

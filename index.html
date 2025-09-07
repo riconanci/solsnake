@@ -686,13 +686,21 @@
                 if (!this.game || !this.game.playerSnake) return;
 
                 const snake = this.game.playerSnake;
-                document.getElementById('hudLength').textContent = snake.length;
-                document.getElementById('hudScore').textContent = Math.round(snake.score); // This shows as "Value" in UI
-                document.getElementById('hudKills').textContent = '0'; // Will be updated when multiplayer is added
-                document.getElementById('hudSpeed').textContent = snake.speed.toFixed(1);
                 
-                // Only update buy-in status for Phase 3
-                document.getElementById('buyinStatus').textContent = '✓ PAID';
+                // Update all HUD elements with current snake values
+                const lengthElement = document.getElementById('hudLength');
+                const scoreElement = document.getElementById('hudScore');
+                const killsElement = document.getElementById('hudKills');
+                const speedElement = document.getElementById('hudSpeed');
+                const buyinElement = document.getElementById('buyinStatus');
+                
+                if (lengthElement) lengthElement.textContent = snake.length.toFixed(1);
+                if (scoreElement) scoreElement.textContent = snake.value.toFixed(2); // Show crypto value, not score
+                if (killsElement) killsElement.textContent = '0'; // Will be updated when multiplayer is added
+                if (speedElement) speedElement.textContent = snake.speed.toFixed(1);
+                if (buyinElement) buyinElement.textContent = '✓ PAID';
+                
+                console.log('🎯 HUD Updated - Length:', snake.length.toFixed(1), 'Value:', snake.value.toFixed(2));
             }
         };
         
